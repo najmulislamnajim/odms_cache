@@ -14,7 +14,7 @@ except:
 
 # Connect to MariaDB
 conn = pymysql.connect(
-    host='10.104.0.10',
+    host='178.128.94.148',
     user='root',
     password='&j}HS9L02z',
     database='odms_dev_db'
