@@ -93,7 +93,7 @@ query = """
         LEFT JOIN rdl_customer_location cl ON sis.partner = cl.customer_id
         LEFT JOIN rpl_material m ON sis.matnr = m.matnr
         LEFT JOIN rdl_delivery d ON dis.billing_doc_no = d.billing_doc_no
-        LEFT JOIN rdl_delivery_list dl ON sis.matnr = dl.matnr AND d.id = dl.delivery_id
+        LEFT JOIN rdl_delivery_list dl ON sis.matnr = dl.matnr AND sis.batch = dl.batch AND d.id = dl.delivery_id
     WHERE
         dis.billing_date = %s 
         AND dis.da_code = %s ;
