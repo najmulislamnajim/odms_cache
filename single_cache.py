@@ -14,17 +14,20 @@ except :
 
 # Connect to MariaDB
 conn = pymysql.connect(
-    host='10.104.0.10',
+    host='160.191.150.60',
     user='root',
-    password='&j}HS9L02z',
-    database='odms_dev_db' 
+    password='5w5A0V&eWP',
+    database='odms_db' 
 )
 cursor = conn.cursor()
 
 # Query for delivery info sap
-billing_date = date.today()
-print(billing_date)
 da_code = sys.argv[1]
+billing_date = sys.argv[2]
+if billing_date == "1":
+    billing_date = date.today()
+
+print(billing_date)
 
 query = """
     SELECT
@@ -99,7 +102,7 @@ query = """
         AND dis.da_code = %s ;
     """
 cursor.execute(query,(billing_date, da_code))
-data=cursor.fetchall()
+data=cursor.fetchall() 
     
 # Convert the result to a list of dictionaries
 column_names = [desc[0] for desc in cursor.description]
