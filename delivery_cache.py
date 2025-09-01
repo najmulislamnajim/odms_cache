@@ -14,10 +14,10 @@ except:
 
 # Connect to MariaDB
 conn = pymysql.connect(
-    host='10.104.0.10',
+    host='160.191.150.60',
     user='root',
-    password='&j}HS9L02z',
-    database='odms_dev_db'
+    password='5w5A0V&eWP',
+    database='odms_db'
 )
 cursor = conn.cursor()
 
@@ -47,10 +47,10 @@ def custom_serializer(obj):
 def process_cache(chunk):
     # Create a new database connection inside the process
     conn = pymysql.connect(
-        host='178.128.94.148',
+        host='160.191.150.60',
         user='root',
-        password='&j}HS9L02z',
-        database='odms_dev_db'
+        password='5w5A0V&eWP',
+        database='odms_db'
     )
     cursor = conn.cursor()
 
@@ -129,7 +129,7 @@ def process_cache(chunk):
                 LEFT JOIN rdl_delivery d ON dis.billing_doc_no = d.billing_doc_no
                 LEFT JOIN rdl_delivery_list dl ON sis.matnr = dl.matnr AND sis.batch = dl.batch AND d.id = dl.delivery_id
             WHERE
-                dis.billing_date = %s 
+                dis.billing_date = %s
                 AND dis.da_code = %s;
         """
         cursor.execute(query, (billing_date, da_code))
@@ -169,4 +169,3 @@ chunks = split_into_chunks(results, num_processes)
 if __name__ == "__main__":
     with Pool(num_processes) as pool:
         pool.map(process_cache, chunks)
-
