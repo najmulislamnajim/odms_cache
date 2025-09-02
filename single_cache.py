@@ -1,33 +1,57 @@
-import redis 
-import pymysql
-import json
-import decimal
-import sys
-from datetime import date 
+import os, sys, json, redis, pymysql, decimal
+from dotenv import load_dotenv
+from datetime import date, datetime
 
-# Connect to Redis
-try:
-    redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
-    r = redis.Redis(connection_pool=redis_pool)
-except :
-    print(f"Failed to connect to Redis")
+# ------------------ Environment ------------------ #
+load_dotenv()
+DB_HOST = os.getenv("DB_HOST")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_USER = os.getenv("DB_USER")
+DB_NAME = os.getenv("DB_NAME")
 
-# Connect to MariaDB
-conn = pymysql.connect(
-    host='160.191.150.60',
-    user='root',
-    password='5w5A0V&eWP',
-    database='odms_db' 
-)
-cursor = conn.cursor()
+# ------------------ Connections ------------------ #
+def connect_redis():
+    try:
+        redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
+        r = redis.Redis(connection_pool=redis_pool)
+        return r
+    except Exception as e:
+        print(f"Redis connection failed: {e} at {datetime.now()}")
+        exit()
 
-# Query for delivery info sap
+def connect_mariadb():
+    try:
+        conn = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            connect_timeout=600,
+            read_timeout=600,
+            write_timeout=600,
+            autocommit=True
+        )
+        return conn
+    except Exception as e:
+        print(f"MariaDB connection failed: {e} at {datetime.now()}")
+        exit()
+
+# ------------------ JSON Serializer ------------------ #
+def custom_serializer(obj):
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, decimal.Decimal):
+        return float(obj)
+    return obj
+
+# --------------- Query for delivery info sap --------------
+print(f"Process started at {datetime.now()}")
+start_time = datetime.now()
+
 da_code = sys.argv[1]
 billing_date = sys.argv[2]
 if billing_date == "1":
     billing_date = date.today()
-
-print(billing_date)
 
 query = """
     SELECT
@@ -101,31 +125,30 @@ query = """
         dis.billing_date = %s 
         AND dis.da_code = %s ;
     """
-cursor.execute(query,(billing_date, da_code))
-data=cursor.fetchall() 
+
+# Connect to MariaDB
+conn = connect_mariadb()
+cursor = conn.cursor()
+try:
+    cursor.execute(query,(billing_date, da_code))
+    data=cursor.fetchall() 
+except Exception as e:
+    print(f"Error fetching data for {da_code}: {e} at {datetime.now()}")
+    cursor.close()
+    conn.close()
+    exit()
     
-# Convert the result to a list of dictionaries
 column_names = [desc[0] for desc in cursor.description]
 data_dict = [dict(zip(column_names, row)) for row in data]
-    
-# Generate key
-cache_key = f"{billing_date}_{da_code}_delivery-info"
-
-# Custom Serializer
-def custom_serializer(obj):
-    if isinstance(obj, date):
-        return obj.isoformat()  # Convert date to string (YYYY-MM-DD format)
-    if isinstance(obj, decimal.Decimal):
-        return float(obj)
-    return obj
-
-# Convert data into json
 json_data=json.dumps(data_dict,default=custom_serializer)
 
-# Save the data to Redis as a JSON string
+cache_key = f"{billing_date}_{da_code}_delivery-info"
+r = connect_redis()
 r.set(cache_key,json_data) 
-print(f"{cache_key} saved")
-
-# Close the cursor and connection
+print(f"{cache_key} saved - {datetime.now()}")
 cursor.close()
 conn.close()
+
+print(f"Process completed at {datetime.now()}")
+end_time = datetime.now()
+print(f"Total time taken: {end_time - start_time} seconds")
