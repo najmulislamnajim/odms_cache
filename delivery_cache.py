@@ -1,63 +1,76 @@
-import redis
-import pymysql
-import json
-import decimal
-from datetime import date
+import os, json, redis, pymysql, decimal
+from dotenv import load_dotenv
+from datetime import date, datetime
 from multiprocessing import Pool, cpu_count
 
-# Connect to Redis
-try:
-    redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
-    r = redis.Redis(connection_pool=redis_pool)
-except:
-    print(f"Failed to connect to Redis")
+# ------------------ Environment ------------------ #
+load_dotenv()
+DB_HOST = os.getenv("DB_HOST")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_USER = os.getenv("DB_USER")
+DB_NAME = os.getenv("DB_NAME")
 
-# Connect to MariaDB
-conn = pymysql.connect(
-    host='160.191.150.60',
-    user='root',
-    password='5w5A0V&eWP',
-    database='odms_db'
-)
-cursor = conn.cursor()
+# ------------------ Connections ------------------ #
+def connect_redis():
+    try:
+        redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
+        r = redis.Redis(connection_pool=redis_pool)
+        return r
+    except Exception as e:
+        print(f"Redis connection failed: {e} at {datetime.now()}")
+        return None
 
-# Query to get all da_code for the current billing_date
-dis_query = """
-SELECT dis.billing_date, dis.da_code
-FROM rdl_delivery_info_sap dis
-WHERE dis.billing_date = CURRENT_DATE
-GROUP BY dis.da_code;
-"""
-cursor.execute(dis_query)
-results = cursor.fetchall()
+def connect_mariadb():
+    try:
+        conn = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            connect_timeout=600,
+            read_timeout=600,
+            write_timeout=600,
+            autocommit=True
+        )
+        return conn
+    except Exception as e:
+        print(f"MariaDB connection failed: {e} at {datetime.now()}")
+        return None
+    
+def get_da_codes():
+    conn = connect_mariadb()
+    if not conn:
+        return []
+    query = """
+    SELECT dis.billing_date, dis.da_code
+    FROM rdl_delivery_info_sap dis
+    WHERE dis.billing_date = CURRENT_DATE
+    GROUP BY dis.da_code;
+    """
+    cursor = conn.cursor()
+    cursor.execute(query)
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return results
 
-# Close the cursor and connection (since we will create new connections in each process)
-cursor.close()
-conn.close()
-
-# Custom serializer for JSON conversion
+# ------------------ JSON Serializer ------------------ #
 def custom_serializer(obj):
     if isinstance(obj, date):
-        return obj.isoformat()  # Convert date to string (YYYY-MM-DD format)
+        return obj.isoformat()
     if isinstance(obj, decimal.Decimal):
         return float(obj)
     return obj
 
-# Function to process caching for a chunk of da_codes
+# ------------------ Process Caching ------------------ #
 def process_cache(chunk):
-    # Create a new database connection inside the process
-    conn = pymysql.connect(
-        host='160.191.150.60',
-        user='root',
-        password='5w5A0V&eWP',
-        database='odms_db'
-    )
+    conn = connect_mariadb()
+    r = connect_redis()
+    if not conn or not r:
+        print(f"Failed to connect to MariaDB or Redis at {datetime.now()}")
+        return
+
     cursor = conn.cursor()
-
-    # Connect to Redis (each process needs its own connection)
-    redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
-    r = redis.Redis(connection_pool=redis_pool)
-
     for billing_date, da_code in chunk:
         cache_key = f"{billing_date}_{da_code}_delivery-info"
         query = """
@@ -132,40 +145,50 @@ def process_cache(chunk):
                 dis.billing_date = %s
                 AND dis.da_code = %s;
         """
-        cursor.execute(query, (billing_date, da_code))
-        data = cursor.fetchall()
+        try:
+            cursor.execute(query, (billing_date, da_code))
+            data = cursor.fetchall()
+        except Exception as e:
+            print(f"Error fetching {da_code} - {billing_date} : {e} at {datetime.now()}")
+            continue
 
-        # Check if data exists
         if not data:
-            print(f"No data found for {billing_date} and {da_code}")
+            print(f"No data found for {da_code} - {billing_date} - {datetime.now()}")
             continue
 
         # Convert the result to a list of dictionaries
         column_names = [desc[0] for desc in cursor.description]
         data_dict = [dict(zip(column_names, row)) for row in data]
-
-        # Convert data into JSON
         json_data = json.dumps(data_dict, default=custom_serializer)
 
-        # Save the data to Redis with a 1-hour expiration
         r.set(cache_key, json_data)
-        print(f"{cache_key} saved")
+        print(f"{cache_key} saved - {datetime.now()}")
 
-    # Close the cursor and connection
     cursor.close()
     conn.close()
 
-
-# Function to split data into `n` chunks
-def split_into_chunks(data, n):
-    chunk_size = len(data) // n
-    return [data[i * chunk_size:(i + 1) * chunk_size] for i in range(n - 1)] + [data[(n - 1) * chunk_size:]]
-
-# Number of parallel processes
-num_processes = 6
-chunks = split_into_chunks(results, num_processes)
+# ------------------ Helper: Split into Chunks ------------------ #
+def split_chunks(da_codes, n):
+    k, m = divmod(len(da_codes), n)
+    return [da_codes[i*k + min(i, m):(i+1)*k + min(i+1, m)] for i in range(n)]
 
 # Run multiprocessing
 if __name__ == "__main__":
+    print(f"Process started at {datetime.now()}")
+    start_time = datetime.now()
+    
+    da_codes = get_da_codes()
+    print(f"Total DA: {len(da_codes)} - {datetime.now()}")
+    if not da_codes:
+        print(f"No DA codes found at {datetime.now()}.")
+        exit()
+
+    num_processes = min(15, len(da_codes))
+    chunks = split_chunks(da_codes, num_processes)
+    
     with Pool(num_processes) as pool:
-        pool.map(process_cache, chunks)
+        pool.map(process_cache,  chunks)
+        
+    print(f"Process completed at {datetime.now()}")
+    end_time = datetime.now()
+    print(f"Total time taken: {end_time - start_time} seconds")
